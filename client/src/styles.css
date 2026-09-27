@@ -386,7 +386,7 @@ button.danger { background: transparent; border-color: var(--red); color: var(--
   font-size: 12px;
 }
 .crew-panel-body {
-  max-height: 150px;
+  max-height: 240px;
   overflow-y: auto;
   padding: 2px 16px 10px;
 }
@@ -404,6 +404,57 @@ button.danger { background: transparent; border-color: var(--red); color: var(--
   font-variant-numeric: tabular-nums;
 }
 .crew-table th { color: var(--muted); font-weight: 500; background: var(--panel-2); }
+
+/* ---------- 休息时段编辑 ---------- */
+.breaks-section {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+.breaks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.breaks-head h3 {
+  margin: 2px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.breaks-add {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.breaks-table { margin: 6px 0 0; }
+.breaks-table th.col-op,
+.breaks-table td.col-op { border: none; background: transparent; padding: 2px 4px; }
+.break-input {
+  width: 88px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.break-input:focus { outline: none; border-color: var(--accent); }
+.break-input.invalid { border-color: var(--red); }
+.break-del {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-color: var(--red);
+  color: var(--red);
+}
+.break-error {
+  border: none !important;
+  padding: 2px 4px 6px !important;
+  color: var(--red);
+  font-size: 11px;
+  line-height: 1.5;
+}
 
 /* ---------- 甘特图 ---------- */
 .timeline {

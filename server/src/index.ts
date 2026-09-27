@@ -19,6 +19,13 @@ interface CommandEdge {
   minDelay: number;
 }
 
+/** 休息时段：相对排程零点的半开区间 [start, end)（秒），班组容量视为零 */
+interface BreakPeriod {
+  id: string;
+  start: number;
+  end: number;
+}
+
 interface Project {
   nodes: CommandNode[];
   edges: CommandEdge[];
@@ -26,6 +33,8 @@ interface Project {
   deadline?: { enabled: boolean; seconds: number };
   /** 班组总人数（正整数；可选，缺省为 1，兼容旧数据） */
   crewSize?: number;
+  /** 休息时段列表（可选，缺省为空，兼容旧数据；仅影响班组排程） */
+  breaks?: BreakPeriod[];
 }
 
 const PORT = Number(process.env.PORT || 8080);
@@ -64,6 +73,8 @@ function seedProject(): Project {
     deadline: { enabled: false, seconds: 34 },
     // 示例班组 2 人：撤场/上场占满班组时会与并行口令错开
     crewSize: 2,
+    // 示例休息时段（半开区间，容量为 0，仅作用于班组排程；最早排程与模拟不受影响）
+    breaks: [{ id: 'b-tea', start: 12, end: 18 }],
   };
 }
 
@@ -101,6 +112,19 @@ function isValidProject(p: unknown): p is Project {
     if (typeof d !== 'object' || d === null) return false;
     if (typeof d.enabled !== 'boolean') return false;
     if (typeof d.seconds !== 'number' || !isFinite(d.seconds) || d.seconds < 0) return false;
+  }
+  // 休息时段：可选，缺省为空（兼容旧数据）；
+  // 每条两端必须为有限数且 0 ≤ 起点 < 终点，id 非空且不重复
+  if (proj.breaks !== undefined) {
+    if (!Array.isArray(proj.breaks)) return false;
+    const breakIds = new Set<string>();
+    for (const b of proj.breaks) {
+      if (!b || typeof b.id !== 'string' || b.id === '') return false;
+      if (typeof b.start !== 'number' || !isFinite(b.start) || b.start < 0) return false;
+      if (typeof b.end !== 'number' || !isFinite(b.end) || b.start >= b.end) return false;
+      if (breakIds.has(b.id)) return false;
+      breakIds.add(b.id);
+    }
   }
   return true;
 }

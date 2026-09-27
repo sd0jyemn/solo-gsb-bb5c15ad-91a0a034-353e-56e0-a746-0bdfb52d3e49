@@ -1,4 +1,4 @@
-import { BackwardInfo, CommandEdge, CrewAssignment, CrewScheduleResult, CycleInfo, Project, ScheduleResult } from './types';
+import { BackwardInfo, BreakPeriod, CommandEdge, CrewAssignment, CrewScheduleResult, CycleInfo, Project, ScheduleResult } from './types';
 
 const EPS = 1e-9;
 
@@ -185,19 +185,55 @@ function findCycle(project: Project, indegree: Map<string, number>): CycleInfo |
 }
 
 /**
+ * 合并休息时段：把交叠或相邻（端点相接）的半开区间 [start, end) 合并为
+ * 一组升序、互不交叠的零容量区间；无效项（非有限数或起点不小于终点）丢弃。
+ */
+export function mergeBreaks(breaks: BreakPeriod[] | undefined): Array<{ start: number; end: number }> {
+  const valid = (breaks ?? [])
+    .filter(
+      (b) =>
+        b &&
+        typeof b.start === 'number' &&
+        typeof b.end === 'number' &&
+        Number.isFinite(b.start) &&
+        Number.isFinite(b.end) &&
+        b.start >= 0 &&
+        b.start < b.end,
+    )
+    .map((b) => ({ start: b.start, end: b.end }))
+    .sort((a, b) => (a.start !== b.start ? a.start - b.start : a.end - b.end));
+
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const b of valid) {
+    const last = merged[merged.length - 1];
+    // 半开区间端点相接（last.end === b.start）即相邻，也合并为一段
+    if (last && b.start <= last.end + EPS) {
+      if (b.end > last.end) last.end = b.end;
+    } else {
+      merged.push({ ...b });
+    }
+  }
+  return merged;
+}
+
+/**
  * 班组排程：在现有前置完成与等待约束下，生成容量受限的不抢占可行排程。
  *
  * - 容量为班组人数（缺省 1），每条口令按其用人数（缺省 0）在 [开始, 结束) 区间内占人，
  *   零时长口令不占人；同一时刻总用人数不得超过容量。
+ * - 休息时段合并后视为班组容量为零的半开区间：正时长且用人数为正的口令必须完整避开，
+ *   零时长或用人数为零的口令不受影响，可在区间内按允许时刻执行。
  * - 口令的允许时刻 = 班组排程中全部前置的（排定结束 + 约束等待）的最大值，无前置为 0。
  * - 每轮从全部前置已排定的口令中，按（允许时刻, 口令 ID 字典序）选一条，
- *   放入不早于允许时刻且整个持续区间不超容量的最早位置（可填入已排定口令之间的空档）。
+ *   放入不早于允许时刻且整个持续区间不超容量、不压休息时段的最早位置
+ *   （可回填到已排定口令与休息时段之间的空档）。
  * - 图有环时不输出班组结果，沿用现有成环路径。
  */
 export function computeCrewSchedule(project: Project): CrewScheduleResult {
+  const mergedBreaks = mergeBreaks(project.breaks);
   const base = computeSchedule(project);
   if (!base.ok) {
-    return { ok: false, assignments: [], starts: {}, makespan: 0, cycle: base.cycle };
+    return { ok: false, assignments: [], starts: {}, makespan: 0, mergedBreaks, cycle: base.cycle };
   }
 
   const { nodes, edges } = project;
@@ -245,7 +281,7 @@ export function computeCrewSchedule(project: Project): CrewScheduleResult {
     const crew = Math.min(crewOf.get(id) ?? 0, capacity);
     const occupies = duration > 0 && crew > 0;
     const start = occupies
-      ? earliestFit(occupancy, allowed.get(id)!, duration, crew, capacity)
+      ? earliestFit(occupancy, mergedBreaks, allowed.get(id)!, duration, crew, capacity)
       : allowed.get(id)!;
     const end = start + duration;
 
@@ -264,7 +300,7 @@ export function computeCrewSchedule(project: Project): CrewScheduleResult {
 
   let makespan = 0;
   for (const a of assignments) makespan = Math.max(makespan, a.end);
-  return { ok: true, assignments, starts, makespan };
+  return { ok: true, assignments, starts, makespan, mergedBreaks };
 }
 
 /** 班组人数：缺省 1，兜底为正整数。 */
@@ -278,12 +314,14 @@ function normalizedCrew(v: number | undefined): number {
 }
 
 /**
- * 不早于 earliest 且整个 [t, t+duration) 区间总用人数不超容量的最早时刻。
- * 占用为分段常值函数，最早可行时刻必为 earliest 或某个已排定区间的结束时刻，
- * 因此候选时刻有限，升序找到第一个可行者即可（全部占用结束之后必然可行）。
+ * 不早于 earliest 且整个 [t, t+duration) 区间总用人数不超容量、且不压任何休息时段的最早时刻。
+ * 占用与休息时段均为分段常值/分段区间，最早可行时刻必为 earliest、某个已排定区间结束时刻
+ * 或某个休息时段结束时刻，因此候选时刻有限，升序找到第一个可行者即可
+ * （全部占用与休息时段结束之后必然可行）。
  */
 function earliestFit(
   occupancy: { start: number; end: number; crew: number }[],
+  breaks: Array<{ start: number; end: number }>,
   earliest: number,
   duration: number,
   crew: number,
@@ -293,25 +331,34 @@ function earliestFit(
   for (const o of occupancy) {
     if (o.end > earliest) candidates.add(o.end);
   }
+  for (const b of breaks) {
+    if (b.end > earliest) candidates.add(b.end);
+  }
   const sorted = [...candidates].sort((a, b) => a - b);
   for (const t of sorted) {
-    if (fitsAt(occupancy, t, duration, crew, capacity)) return t;
+    if (fitsAt(occupancy, breaks, t, duration, crew, capacity)) return t;
   }
-  // 兜底：所有占用结束之后
+  // 兜底：所有占用与休息时段结束之后
   let t = earliest;
   for (const o of occupancy) t = Math.max(t, o.end);
+  for (const b of breaks) t = Math.max(t, b.end);
   return t;
 }
 
-/** 检查 [t, t+duration) 内每个占用变化点的总用人数是否不超容量。 */
+/** 检查 [t, t+duration) 内是否不压休息时段，且每个占用变化点的总用人数不超容量。 */
 function fitsAt(
   occupancy: { start: number; end: number; crew: number }[],
+  breaks: Array<{ start: number; end: number }>,
   t: number,
   duration: number,
   crew: number,
   capacity: number,
 ): boolean {
   const end = t + duration;
+  // 休息时段为容量零的半开区间：[t,end) 与 [b.start,b.end) 有交则不可行
+  for (const b of breaks) {
+    if (t < b.end - EPS && end > b.start + EPS) return false;
+  }
   const usedAt = (p: number): number => {
     let used = 0;
     for (const o of occupancy) {

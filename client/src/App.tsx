@@ -5,19 +5,39 @@ import { GraphCanvas, Selection } from './GraphCanvas';
 import { computeCrewSchedule, computeSchedule } from './schedule';
 import { SidePanel } from './SidePanel';
 import { Timeline } from './Timeline';
-import { CommandNode, Project, ScheduleResult } from './types';
+import { BreakPeriod, CommandNode, Project, ScheduleResult } from './types';
 import { useSimulation } from './useSimulation';
 
 const EMPTY: Project = { nodes: [], edges: [] };
 
-/** 兼容旧数据：班组人数缺省 1（正整数），口令用人数缺省 0（不超过班组人数的非负整数）。 */
+/** 兼容旧数据：班组人数缺省 1（正整数），口令用人数缺省 0（不超过班组人数的非负整数），休息时段缺省空。 */
 function normalizeProject(p: Project): Project {
   const raw = p.crewSize;
   const crewSize =
     typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 ? raw : 1;
+  // 休息时段仅保留两端为有限数且 0≤起点<终点 的项（旧项目缺省为空）
+  const breaks: BreakPeriod[] = Array.isArray(p.breaks)
+    ? p.breaks
+        .filter(
+          (b): b is BreakPeriod =>
+            !!b &&
+            typeof b.start === 'number' &&
+            typeof b.end === 'number' &&
+            Number.isFinite(b.start) &&
+            Number.isFinite(b.end) &&
+            b.start >= 0 &&
+            b.start < b.end,
+        )
+        .map((b, i) => ({
+          id: typeof b.id === 'string' && b.id ? b.id : `break-${i}-${crypto.randomUUID()}`,
+          start: b.start,
+          end: b.end,
+        }))
+    : [];
   return {
     ...p,
     crewSize,
+    breaks,
     nodes: p.nodes.map((n) => {
       const c = n.crew;
       const crew =
@@ -181,6 +201,30 @@ export default function App() {
     [update],
   );
 
+  const addBreak = useCallback(() => {
+    update((p) => ({
+      ...p,
+      breaks: [...(p.breaks ?? []), { id: crypto.randomUUID(), start: 0, end: 1 }],
+    }));
+  }, [update]);
+
+  const updateBreak = useCallback(
+    (id: string, patch: Partial<Pick<BreakPeriod, 'start' | 'end'>>) => {
+      update((p) => ({
+        ...p,
+        breaks: (p.breaks ?? []).map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      }));
+    },
+    [update],
+  );
+
+  const deleteBreak = useCallback(
+    (id: string) => {
+      update((p) => ({ ...p, breaks: (p.breaks ?? []).filter((b) => b.id !== id) }));
+    },
+    [update],
+  );
+
   if (loadError) {
     return <div className="boot-message">加载失败：{loadError}</div>;
   }
@@ -293,7 +337,14 @@ export default function App() {
         />
       </div>
 
-      <CrewPanel project={project} result={crewSchedule} cycle={cycle} />
+      <CrewPanel
+        project={project}
+        result={crewSchedule}
+        cycle={cycle}
+        onAddBreak={addBreak}
+        onUpdateBreak={updateBreak}
+        onDeleteBreak={deleteBreak}
+      />
 
       <Timeline
         project={project}

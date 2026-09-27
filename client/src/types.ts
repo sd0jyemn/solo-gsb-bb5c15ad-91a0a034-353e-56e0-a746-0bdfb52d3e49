@@ -25,6 +25,15 @@ export interface DeadlineSetting {
   seconds: number;
 }
 
+/** 休息时段：相对排程零点的半开区间 [start, end)（秒），时段内班组容量为零 */
+export interface BreakPeriod {
+  id: string;
+  /** 起点秒数（有限数，≥ 0 且小于终点） */
+  start: number;
+  /** 终点秒数（有限数，大于起点） */
+  end: number;
+}
+
 export interface Project {
   nodes: CommandNode[];
   edges: CommandEdge[];
@@ -32,6 +41,8 @@ export interface Project {
   deadline?: DeadlineSetting;
   /** 班组总人数（正整数；缺省为 1，兼容旧数据） */
   crewSize?: number;
+  /** 休息时段列表；缺省为空（兼容旧数据），仅影响班组排程 */
+  breaks?: BreakPeriod[];
 }
 
 export interface CycleInfo {
@@ -86,6 +97,8 @@ export interface CrewScheduleResult {
   starts: Record<string, number>;
   /** 全部口令完成的总时长（秒） */
   makespan: number;
+  /** 交叠或相邻休息时段合并后的半开零容量区间（升序、互不交叠） */
+  mergedBreaks: Array<{ start: number; end: number }>;
   cycle?: CycleInfo;
 }
 
