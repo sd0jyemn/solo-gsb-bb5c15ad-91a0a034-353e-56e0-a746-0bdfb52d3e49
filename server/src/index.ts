@@ -19,6 +19,13 @@ interface CommandEdge {
   minDelay: number;
 }
 
+/** 休息时段（相对排程零点的起止秒数，半开区间 [start, end)） */
+interface RestPeriod {
+  id: string;
+  start: number;
+  end: number;
+}
+
 interface Project {
   nodes: CommandNode[];
   edges: CommandEdge[];
@@ -26,6 +33,8 @@ interface Project {
   deadline?: { enabled: boolean; seconds: number };
   /** 班组总人数（正整数；可选，缺省为 1，兼容旧数据） */
   crewSize?: number;
+  /** 休息时段（可选，缺省为空，兼容旧数据） */
+  restPeriods?: RestPeriod[];
 }
 
 const PORT = Number(process.env.PORT || 8080);
@@ -64,6 +73,8 @@ function seedProject(): Project {
     deadline: { enabled: false, seconds: 34 },
     // 示例班组 2 人：撤场/上场占满班组时会与并行口令错开
     crewSize: 2,
+    // 示例休息时段：需用人的正时长口令会避开该区间，班组排程总工期随之顺延
+    restPeriods: [{ id: 'r-break-1', start: 15, end: 25 }],
   };
 }
 
@@ -101,6 +112,15 @@ function isValidProject(p: unknown): p is Project {
     if (typeof d !== 'object' || d === null) return false;
     if (typeof d.enabled !== 'boolean') return false;
     if (typeof d.seconds !== 'number' || !isFinite(d.seconds) || d.seconds < 0) return false;
+  }
+  // 休息时段：可选数组；每条两端必须为有限数且 0 ≤ 起点 < 终点（缺省按空数组处理）
+  if (proj.restPeriods !== undefined) {
+    if (!Array.isArray(proj.restPeriods)) return false;
+    for (const r of proj.restPeriods) {
+      if (!r || typeof r.id !== 'string') return false;
+      if (typeof r.start !== 'number' || !isFinite(r.start) || r.start < 0) return false;
+      if (typeof r.end !== 'number' || !isFinite(r.end) || r.end <= r.start) return false;
+    }
   }
   return true;
 }

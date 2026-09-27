@@ -5,19 +5,34 @@ import { GraphCanvas, Selection } from './GraphCanvas';
 import { computeCrewSchedule, computeSchedule } from './schedule';
 import { SidePanel } from './SidePanel';
 import { Timeline } from './Timeline';
-import { CommandNode, Project, ScheduleResult } from './types';
+import { CommandNode, Project, RestPeriod, ScheduleResult } from './types';
 import { useSimulation } from './useSimulation';
 
 const EMPTY: Project = { nodes: [], edges: [] };
 
-/** 兼容旧数据：班组人数缺省 1（正整数），口令用人数缺省 0（不超过班组人数的非负整数）。 */
+/**
+ * 兼容旧数据：班组人数缺省 1（正整数），口令用人数缺省 0（不超过班组人数的非负整数），
+ * 休息时段缺省为空（逐条兜底为有限数且 0 ≤ 起点 < 终点）。
+ */
 function normalizeProject(p: Project): Project {
   const raw = p.crewSize;
   const crewSize =
     typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 ? raw : 1;
+  const restPeriods = Array.isArray(p.restPeriods)
+    ? p.restPeriods.filter(
+        (r) =>
+          r &&
+          typeof r.id === 'string' &&
+          Number.isFinite(r.start) &&
+          Number.isFinite(r.end) &&
+          r.start >= 0 &&
+          r.start < r.end,
+      )
+    : [];
   return {
     ...p,
     crewSize,
+    restPeriods,
     nodes: p.nodes.map((n) => {
       const c = n.crew;
       const crew =
@@ -181,6 +196,34 @@ export default function App() {
     [update],
   );
 
+  // 休息时段随项目保存；两端为有限数且 0 ≤ 起点 < 终点时才写入
+  const addRestPeriod = useCallback(
+    (period: RestPeriod) => {
+      update((p) => ({ ...p, restPeriods: [...(p.restPeriods ?? []), period] }));
+    },
+    [update],
+  );
+
+  const updateRestPeriod = useCallback(
+    (id: string, patch: { start?: number; end?: number }) => {
+      update((p) => ({
+        ...p,
+        restPeriods: (p.restPeriods ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r)),
+      }));
+    },
+    [update],
+  );
+
+  const deleteRestPeriod = useCallback(
+    (id: string) => {
+      update((p) => ({
+        ...p,
+        restPeriods: (p.restPeriods ?? []).filter((r) => r.id !== id),
+      }));
+    },
+    [update],
+  );
+
   if (loadError) {
     return <div className="boot-message">加载失败：{loadError}</div>;
   }
@@ -293,7 +336,14 @@ export default function App() {
         />
       </div>
 
-      <CrewPanel project={project} result={crewSchedule} cycle={cycle} />
+      <CrewPanel
+        project={project}
+        result={crewSchedule}
+        cycle={cycle}
+        onAddRestPeriod={addRestPeriod}
+        onUpdateRestPeriod={updateRestPeriod}
+        onDeleteRestPeriod={deleteRestPeriod}
+      />
 
       <Timeline
         project={project}
